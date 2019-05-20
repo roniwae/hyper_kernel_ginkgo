@@ -268,6 +268,7 @@ struct smbchg_chip {
 	bool				skip_usb_notification;
 	u32				vchg_adc_channel;
 	struct qpnp_vadc_chip		*vchg_vadc_dev;
+	struct qpnp_vadc_chip		*vusb_vadc_dev;
 
 	/* voters */
 	struct votable			*fcc_votable;
@@ -5764,6 +5765,136 @@ static void update_typec_otg_status(struct smbchg_chip *chip, int mode,
 	}
 }
 
+static int smbchg_get_vusb(struct smbchg_chip *chip)
+{
+	int rc;
+	struct qpnp_vadc_result adc_result;
+
+	if (!is_usb_present(chip))
+		return 0;
+
+	if (chip->vusb_vadc_dev) {
+		rc = qpnp_vadc_read(chip->vusb_vadc_dev,
+				USBIN, &adc_result);
+		if (rc < 0) {
+			pr_smb(PR_STATUS,
+				"error in vusb_uv read rc = %d\n", rc);
+			return rc;
+		}
+	} else {
+		return -ENODATA;
+	}
+	pr_smb(PR_STATUS, "The value of vusb_uv %lld\n", adc_result.physical);
+
+	return adc_result.physical;
+}
+
+static int smbchg_set_sdp_current(struct smbchg_chip *chip, int current_ma)
+{
+	if (chip->usb_supply_type == POWER_SUPPLY_TYPE_USB) {
+		/* Override if type-c charger used */
+		if (chip->typec_current_ma > 500 &&
+				current_ma < chip->typec_current_ma) {
+			current_ma = chip->typec_current_ma;
+		}
+		pr_smb(PR_MISC, "from USB current_ma = %d\n", current_ma);
+		vote(chip->usb_icl_votable, PSY_ICL_VOTER, true, current_ma);
+	}
+
+	return 0;
+}
+
+static int smbchg_usb_get_property(struct power_supply *psy,
+				  enum power_supply_property psp,
+				  union power_supply_propval *val)
+{
+	struct smbchg_chip *chip = power_supply_get_drvdata(psy);
+
+	switch (psp) {
+	case POWER_SUPPLY_PROP_CURRENT_MAX:
+	case POWER_SUPPLY_PROP_SDP_CURRENT_MAX:
+		if (chip->usb_icl_votable)
+			val->intval = get_client_vote(chip->usb_icl_votable,
+						PSY_ICL_VOTER) * 1000;
+		else
+			val->intval = 0;
+		break;
+	case POWER_SUPPLY_PROP_PRESENT:
+		val->intval = chip->usb_present;
+		break;
+	case POWER_SUPPLY_PROP_ONLINE:
+		val->intval = chip->usb_online;
+		break;
+	case POWER_SUPPLY_PROP_TYPE:
+		val->intval = chip->usb_psy_d.type;
+		break;
+	case POWER_SUPPLY_PROP_REAL_TYPE:
+		val->intval = chip->usb_supply_type;
+		break;
+	case POWER_SUPPLY_PROP_HEALTH:
+		val->intval = chip->usb_health;
+		break;
+	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
+		val->intval = smbchg_get_vusb(chip);
+		break;
+	default:
+		return -EINVAL;
+	}
+	return 0;
+}
+
+static int smbchg_usb_set_property(struct power_supply *psy,
+				  enum power_supply_property psp,
+				  const union power_supply_propval *val)
+{
+	struct smbchg_chip *chip = power_supply_get_drvdata(psy);
+
+	switch (psp) {
+	case POWER_SUPPLY_PROP_ONLINE:
+		chip->usb_online = val->intval;
+		break;
+	case POWER_SUPPLY_PROP_CURRENT_MAX:
+	case POWER_SUPPLY_PROP_SDP_CURRENT_MAX:
+		smbchg_set_sdp_current(chip, val->intval / 1000);
+	default:
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+static int
+smbchg_usb_is_writeable(struct power_supply *psy,
+			enum power_supply_property psp)
+{
+	switch (psp) {
+	case POWER_SUPPLY_PROP_CURRENT_MAX:
+	case POWER_SUPPLY_PROP_SDP_CURRENT_MAX:
+		return 1;
+	default:
+		break;
+	}
+
+	return 0;
+}
+
+
+static char *smbchg_usb_supplicants[] = {
+	"battery",
+	"bms",
+};
+
+static enum power_supply_property smbchg_usb_properties[] = {
+	POWER_SUPPLY_PROP_PRESENT,
+	POWER_SUPPLY_PROP_ONLINE,
+	POWER_SUPPLY_PROP_CURRENT_MAX,
+	POWER_SUPPLY_PROP_TYPE,
+	POWER_SUPPLY_PROP_REAL_TYPE,
+	POWER_SUPPLY_PROP_HEALTH,
+	POWER_SUPPLY_PROP_SDP_CURRENT_MAX,
+	POWER_SUPPLY_PROP_VOLTAGE_NOW,
+};
+
 #define CHARGE_OUTPUT_VTG_RATIO		840
 static int smbchg_get_iusb(struct smbchg_chip *chip)
 {
@@ -8059,6 +8190,7 @@ static int smbchg_probe(struct spmi_device *spmi)
 	struct smbchg_chip *chip;
 	struct power_supply *usb_psy, *typec_psy = NULL;
 	struct qpnp_vadc_chip *vadc_dev = NULL, *vchg_vadc_dev = NULL;
+	struct qpnp_vadc_chip *vusb_vadc_dev = NULL;
 	const char *typec_psy_name;
 
 	usb_psy = power_supply_get_by_name("usb");
@@ -8107,9 +8239,21 @@ static int smbchg_probe(struct spmi_device *spmi)
 		}
 	}
 
-	chip = devm_kzalloc(&spmi->dev, sizeof(*chip), GFP_KERNEL);
-	if (!chip) {
-		dev_err(&spmi->dev, "Unable to allocate memory\n");
+	vusb_vadc_dev = NULL;
+	if (of_find_property(pdev->dev.of_node, "qcom,usbin-vadc", NULL)) {
+		vusb_vadc_dev = qpnp_get_vadc(&pdev->dev, "usbin");
+		if (IS_ERR(vusb_vadc_dev)) {
+			rc = PTR_ERR(vusb_vadc_dev);
+			if (rc != -EPROBE_DEFER)
+				dev_err(&pdev->dev, "Couldn't get vadc 'usbin' rc=%d\n",
+						rc);
+			return rc;
+		}
+	}
+
+
+	chip = devm_kzalloc(&pdev->dev, sizeof(*chip), GFP_KERNEL);
+	if (!chip)
 		return -ENOMEM;
 	}
 
@@ -8194,9 +8338,11 @@ static int smbchg_probe(struct spmi_device *spmi)
 	init_completion(&chip->usbin_uv_raised);
 	chip->vadc_dev = vadc_dev;
 	chip->vchg_vadc_dev = vchg_vadc_dev;
-	chip->spmi = spmi;
-	chip->dev = &spmi->dev;
-	chip->usb_psy = usb_psy;
+
+	chip->vusb_vadc_dev = vusb_vadc_dev;
+	chip->pdev = pdev;
+	chip->dev = &pdev->dev;
+
 	chip->typec_psy = typec_psy;
 	chip->fake_battery_soc = -EINVAL;
 	chip->usb_online = -EINVAL;
