@@ -9,6 +9,11 @@ TC_DIR="$HOME/tc/xRageTC-clang"
 AK3_DIR="$HOME/android/AnyKernel3"
 DEFCONFIG="vendor/ginkgo-perf_defconfig"
 
+if test -z "$(git rev-parse --show-cdup 2>/dev/null)" &&
+   head=$(git rev-parse --verify HEAD 2>/dev/null); then
+	ZIPNAME="${ZIPNAME::-4}-$(echo $head | cut -c1-8).zip"
+fi
+
 export PATH="$TC_DIR/bin:$PATH"
 
 if ! [ -d "$TC_DIR" ]; then
