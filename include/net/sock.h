@@ -1476,10 +1476,8 @@ do {									\
 } while (0)
 
 #ifdef CONFIG_LOCKDEP
-static inline bool lockdep_sock_is_held(const struct sock *csk)
+static inline bool lockdep_sock_is_held(const struct sock *sk)
 {
-	struct sock *sk = (struct sock *)csk;
-
 	return lockdep_is_held(&sk->sk_lock) ||
 	       lockdep_is_held(&sk->sk_lock.slock);
 }
@@ -2066,6 +2064,19 @@ static inline void skb_set_owner_r(struct sk_buff *skb, struct sock *sk)
 	skb->destructor = sock_rfree;
 	atomic_add(skb->truesize, &sk->sk_rmem_alloc);
 	sk_mem_charge(sk, skb->truesize);
+}
+
+static inline struct sk_buff *skb_clone_and_charge_r(struct sk_buff *skb, struct sock *sk)
+{
+	skb = skb_clone(skb, sk_gfp_mask(sk, GFP_ATOMIC));
+	if (skb) {
+		if (sk_rmem_schedule(sk, skb, skb->truesize)) {
+			skb_set_owner_r(skb, sk);
+			return skb;
+		}
+		__kfree_skb(skb);
+	}
+	return NULL;
 }
 
 void sk_reset_timer(struct sock *sk, struct timer_list *timer,

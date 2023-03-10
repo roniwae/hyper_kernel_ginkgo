@@ -36,6 +36,7 @@ extern int sched_fork(unsigned long clone_flags, struct task_struct *p);
 extern void sched_dead(struct task_struct *p);
 
 void __noreturn do_task_dead(void);
+void __noreturn make_task_dead(int signr);
 
 extern void proc_caches_init(void);
 
@@ -97,8 +98,6 @@ static inline void put_task_struct(struct task_struct *t)
 	if (atomic_dec_and_test(&t->usage))
 		__put_task_struct(t);
 }
-
-struct task_struct *task_rcu_dereference(struct task_struct **ptask);
 
 #ifdef CONFIG_ARCH_WANTS_DYNAMIC_TASK_STRUCT
 extern int arch_task_struct_size __read_mostly;

@@ -512,7 +512,7 @@ void qdisc_put_stab(struct qdisc_size_table *tab)
 
 	if (--tab->refcnt == 0) {
 		list_del(&tab->list);
-		call_rcu_bh(&tab->rcu, stab_kfree_rcu);
+		call_rcu(&tab->rcu, stab_kfree_rcu);
 	}
 }
 EXPORT_SYMBOL(qdisc_put_stab);
@@ -959,10 +959,14 @@ skip:
 		if (cops && cops->graft) {
 			unsigned long cl = cops->find(parent, classid);
 
-			if (cl)
-				err = cops->graft(parent, cl, new, &old);
-			else
+			if (cl) {
+				if (new && new->ops == &noqueue_qdisc_ops)
+					err = -EINVAL;
+				else
+					err = cops->graft(parent, cl, new, &old);
+			} else {
 				err = -ENOENT;
+			}
 		}
 		if (!err)
 			notify_and_destroy(net, skb, n, classid, old, new);

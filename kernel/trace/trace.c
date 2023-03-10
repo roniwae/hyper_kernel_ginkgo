@@ -1687,7 +1687,7 @@ void tracing_reset(struct trace_buffer *buf, int cpu)
 	ring_buffer_record_disable(buffer);
 
 	/* Make sure all commits have finished */
-	synchronize_sched();
+	synchronize_rcu();
 	ring_buffer_reset_cpu(buffer, cpu);
 
 	ring_buffer_record_enable(buffer);
@@ -1704,7 +1704,7 @@ void tracing_reset_online_cpus(struct trace_buffer *buf)
 	ring_buffer_record_disable(buffer);
 
 	/* Make sure all commits have finished */
-	synchronize_sched();
+	synchronize_rcu();
 
 	buf->time_start = buffer_ftrace_now(buf, buf->cpu);
 
@@ -2263,7 +2263,7 @@ void trace_buffered_event_disable(void)
 	preempt_enable();
 
 	/* Wait for all current users to finish */
-	synchronize_sched();
+	synchronize_rcu();
 
 	for_each_tracing_cpu(cpu) {
 		free_page((unsigned long)per_cpu(trace_buffered_event, cpu));
@@ -2708,17 +2708,6 @@ void __trace_stack(struct trace_array *tr, unsigned long flags, int skip,
 	 * not be called from NMI.
 	 */
 	if (unlikely(in_nmi()))
-		return;
-
-	/*
-	 * It is possible that a function is being traced in a
-	 * location that RCU is not watching. A call to
-	 * rcu_irq_enter() will make sure that it is, but there's
-	 * a few internal rcu functions that could be traced
-	 * where that wont work either. In those cases, we just
-	 * do nothing.
-	 */
-	if (unlikely(rcu_irq_enter_disabled()))
 		return;
 
 	rcu_irq_enter_irqson();
@@ -5439,7 +5428,7 @@ static int tracing_set_tracer(struct trace_array *tr, const char *buf)
 	if (tr->current_trace->reset)
 		tr->current_trace->reset(tr);
 
-	/* Current trace needs to be nop_trace before synchronize_sched */
+	/* Current trace needs to be nop_trace before synchronize_rcu */
 	tr->current_trace = &nop_trace;
 
 #ifdef CONFIG_TRACER_MAX_TRACE
@@ -5453,7 +5442,7 @@ static int tracing_set_tracer(struct trace_array *tr, const char *buf)
 		 * The update_max_tr is called from interrupts disabled
 		 * so a synchronized_sched() is sufficient.
 		 */
-		synchronize_sched();
+		synchronize_rcu();
 		free_snapshot(tr);
 	}
 #endif
@@ -5804,7 +5793,20 @@ waitagain:
 
 		ret = print_trace_line(iter);
 		if (ret == TRACE_TYPE_PARTIAL_LINE) {
-			/* don't print partial lines */
+			/*
+			 * If one print_trace_line() fills entire trace_seq in one shot,
+			 * trace_seq_to_user() will returns -EBUSY because save_len == 0,
+			 * In this case, we need to consume it, otherwise, loop will peek
+			 * this event next time, resulting in an infinite loop.
+			 */
+			if (save_len == 0) {
+				iter->seq.full = 0;
+				trace_seq_puts(&iter->seq, "[LINE TOO BIG]\n");
+				trace_consume(iter);
+				break;
+			}
+
+			/* In other cases, don't print partial lines */
 			iter->seq.seq.len = save_len;
 			break;
 		}
@@ -8485,6 +8487,8 @@ void __init early_trace_init(void)
 			static_key_enable(&tracepoint_printk_key.key);
 	}
 	tracer_alloc_buffers();
+
+	init_events();
 }
 
 void __init trace_init(void)
