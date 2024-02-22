@@ -212,7 +212,7 @@ static void __init setup_machine_fdt(phys_addr_t dt_phys)
 	/* Early fixups are done, map the FDT as read-only now */
 	fixmap_remap_fdt(dt_phys, &size, PAGE_KERNEL_RO);
 
-	name = of_flat_dt_get_machine_name();
+	machine_name = arch_read_machine_name();
 	if (!machine_name)
 		return;
 
