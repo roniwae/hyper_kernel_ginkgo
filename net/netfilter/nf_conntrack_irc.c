@@ -389,11 +389,9 @@ static int help(struct sk_buff *skb, unsigned int protoff,
 			}
 			/*NICK during registration*/
 			ret = NF_ACCEPT;
-			goto out;
 		}
 	}
 
-	else{
 		/*Parsing NICK command from client to create an entry
 		 * strlen("NICK xxxxxx")
 		 * 5+strlen("xxxxxx")=1 (minimum length of nickname)
@@ -407,7 +405,6 @@ static int help(struct sk_buff *skb, unsigned int protoff,
 			}
 			data += 5;
 			ret = handle_nickname(ct, dir, data);
-			goto out;
 		}
 
 		data = ib_ptr;
@@ -427,7 +424,6 @@ static int help(struct sk_buff *skb, unsigned int protoff,
 				kfree(temp);
 			}
 			ret = NF_ACCEPT;
-			goto out;
 		}
 		/* strlen("\1DCC SENT t AAAAAAAA P\1\n")=24
 		 * 5+MINMATCHLEN+strlen("t AAAAAAAA P\1\n")=14
@@ -487,7 +483,7 @@ static int help(struct sk_buff *skb, unsigned int protoff,
 					nf_ct_helper_log(skb, ct,
 							 "cannot alloc expectation");
 					ret = NF_DROP;
-					goto out;
+
 				}
 				tuple = &ct->tuplehash[!dir].tuple;
 				port = htons(dcc_port);
@@ -537,13 +533,9 @@ static int help(struct sk_buff *skb, unsigned int protoff,
 					ret = NF_DROP;
 				}
 				nf_ct_expect_put(exp);
-				goto out;
+
 			}
 		}
-	}
- out:
-	spin_unlock_bh(&irc_buffer_lock);
-	return ret;
 }
 
 static struct nf_conntrack_helper irc[MAX_PORTS] __read_mostly;
