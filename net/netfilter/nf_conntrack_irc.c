@@ -367,7 +367,6 @@ static int help(struct sk_buff *skb, unsigned int protoff,
 				nf_ct_helper_log(skb, ct,
 						 "cannot alloc expectation");
 				ret = NF_DROP;
-				goto out;
 
 			}
 			tuple = &ct->tuplehash[!dir].tuple;
