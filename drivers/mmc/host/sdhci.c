@@ -2135,17 +2135,6 @@ void sdhci_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 
 	host->ops->set_bus_width(host, ios->bus_width);
 
-	/*
-	 * Special case to avoid multiple clock changes during voltage
-	 * switching.
-	 */
-	if (!reinit_uhs &&
-	    turning_on_clk &&
-	    host->timing == ios->timing &&
-	    host->version >= SDHCI_SPEC_300 &&
-	    !sdhci_presetable_values_change(host, ios))
-		return;
-
 	ctrl = sdhci_readb(host, SDHCI_HOST_CONTROL);
 
 	if (!(host->quirks & SDHCI_QUIRK_NO_HISPD_BIT)) {
@@ -2221,7 +2210,6 @@ void sdhci_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 		host->ops->set_uhs_signaling(host, ios->timing);
 		host->timing = ios->timing;
 
-		if (sdhci_preset_needed(host, ios->timing)) {
 			u16 preset;
 
 			sdhci_enable_preset_value(host, true);
@@ -2229,7 +2217,6 @@ void sdhci_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 			ios->drv_type = FIELD_GET(SDHCI_PRESET_DRV_MASK,
 						  preset);
 			host->drv_type = ios->drv_type;
-		}
 
 		/* Re-enable SD Clock */
 		if (ios->clock) {
