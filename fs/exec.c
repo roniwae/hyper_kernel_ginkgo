@@ -1715,7 +1715,6 @@ static int exec_binprm(struct linux_binprm *bprm)
 	return ret;
 }
 
-
 static void android_service_blacklist(const char *name)
 {
 #define FULL(x) { x, sizeof(x) }
